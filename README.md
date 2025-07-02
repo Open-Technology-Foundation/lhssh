@@ -1,7 +1,7 @@
 # lhssh - Local Host SSH Scanner and Connection Manager
 
 [![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/Open-Technology-Foundation/lhssh)
-[![License](https://img.shields.io/badge/license-GPL-3-green)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPL3-green)](LICENSE)
 
 A modern, dependency-free bash utility for scanning and managing SSH connections to hosts on local networks.
 
