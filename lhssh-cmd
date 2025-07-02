@@ -1,4 +1,5 @@
 #!/bin/bash
+#shellcheck disable=SC2155
 set -euo pipefail
 
 # lhssh-cmd - Execute commands on multiple SSH hosts
@@ -71,8 +72,8 @@ version_get() {
 # Cleanup function
 cleanup() {
   local exit_code=${1:-$?}
-  [[ -f "$ERR_FILE" ]] && rm -f "$ERR_FILE"
-  exit $exit_code
+  [[ ! -f "$ERR_FILE" ]] || rm -f "$ERR_FILE"
+  exit "$exit_code"
 }
 
 # Execute command on single host
@@ -140,6 +141,7 @@ execute_on_all_hosts() {
     msg_info "Executing command in parallel (max $MAX_PARALLEL simultaneous connections)"
     
     # Use xargs for parallel execution
+    #shellcheck disable=SC2016
     printf '%s\n' "${hosts[@]}" | \
       xargs -P "$MAX_PARALLEL" -I {} bash -c '
         host="$1"
@@ -277,7 +279,7 @@ main() {
         shift
         LHSSH_CMD="${1:-lhssh}"
         ;;
-      --|--lhssh)
+      --)
         shift
         # Collect remaining args
         while (($#)) && [[ "$1" != "--" ]]; do
