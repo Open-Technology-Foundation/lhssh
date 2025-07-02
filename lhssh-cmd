@@ -1,0 +1,326 @@
+#!/bin/bash
+set -euo pipefail
+
+# lhssh-cmd - Execute commands on multiple SSH hosts
+# Batch command executor for lhssh
+
+readonly SCRIPT_NAME="$(basename "$0")"
+readonly SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+readonly VERSION="2.0.0"
+readonly ERR_FILE="/tmp/${SCRIPT_NAME}-$$-${RANDOM}"
+
+# Configuration
+declare -gi VERBOSE=0
+declare -gi QUIET=0
+declare -gi PARALLEL=0
+declare -gi MAX_PARALLEL=10
+declare -g LHSSH_CMD="lhssh"
+
+# Color codes
+declare -gr RED='\033[0;31m'
+declare -gr GREEN='\033[0;32m'
+declare -gr YELLOW='\033[0;33m'
+declare -gr BLUE='\033[0;34m'
+declare -gr CYAN='\033[0;36m'
+declare -gr NC='\033[0m' # No Color
+
+# Cleanup on exit
+trap 'cleanup' EXIT INT TERM
+
+# Native logging functions (replacing e.bash msg functions)
+msg() {
+  local message="$*"
+  if ((! QUIET)); then
+    echo -e "$message"
+  fi
+}
+
+msg_info() {
+  if ((VERBOSE && ! QUIET)); then
+    echo -e "${BLUE}[INFO]${NC} $*" >&2
+  fi
+}
+
+msg_error() {
+  echo -e "${RED}[ERROR]${NC} $*" >&2
+}
+
+msg_warn() {
+  if ((! QUIET)); then
+    echo -e "${YELLOW}[WARN]${NC} $*" >&2
+  fi
+}
+
+msg_success() {
+  if ((! QUIET)); then
+    echo -e "${GREEN}[OK]${NC} $*" >&2
+  fi
+}
+
+msg_line() {
+  local char="${1:--}"
+  local width="${2:-80}"
+  printf '%*s\n' "$width" '' | tr ' ' "$char"
+}
+
+# Version management (replacing e.bash version functions)
+version_get() {
+  echo "$VERSION"
+}
+
+# Cleanup function
+cleanup() {
+  local exit_code=${1:-$?}
+  [[ -f "$ERR_FILE" ]] && rm -f "$ERR_FILE"
+  exit $exit_code
+}
+
+# Execute command on single host
+execute_on_host() {
+  local host="$1"
+  shift
+  local -a command=("$@")
+  local -a lhssh_opts=()
+  
+  # Build lhssh options
+  if ((VERBOSE)); then
+    lhssh_opts+=(-v)
+  fi
+  
+  # Execute command
+  local output
+  local exit_code=0
+  
+  if output=$("$LHSSH_CMD" "${lhssh_opts[@]}" "$host" -- "${command[@]}" 2>"$ERR_FILE"); then
+    # Success
+    if [[ -n "$output" ]]; then
+      echo -e "${GREEN}[$host]${NC} $output"
+    else
+      ((VERBOSE)) && echo -e "${GREEN}[$host]${NC} Command completed successfully"
+    fi
+  else
+    exit_code=$?
+    # Error
+    local error_msg
+    error_msg=$(<"$ERR_FILE")
+    echo -e "${RED}[$host]${NC} Failed (exit code: $exit_code)" >&2
+    if [[ -n "$error_msg" ]]; then
+      echo -e "${RED}[$host]${NC} $error_msg" >&2
+    fi
+  fi
+  
+  return $exit_code
+}
+
+# Execute command on all hosts
+execute_on_all_hosts() {
+  local -a command=("$@")
+  local -a hosts=()
+  local -a lhssh_scan_opts=(-p)  # Get super short format
+  
+  msg_info "Discovering SSH hosts..."
+  
+  # Get list of hosts
+  mapfile -t hosts < <("$LHSSH_CMD" "${lhssh_scan_opts[@]}")
+  
+  if ((${#hosts[@]} == 0)); then
+    msg_error "No SSH hosts found"
+    return 1
+  fi
+  
+  msg_info "Found ${#hosts[@]} hosts: ${hosts[*]}"
+  msg_line "="
+  
+  local total=${#hosts[@]}
+  local success=0
+  local failed=0
+  
+  if ((PARALLEL)); then
+    # Parallel execution
+    msg_info "Executing command in parallel (max $MAX_PARALLEL simultaneous connections)"
+    
+    # Use xargs for parallel execution
+    printf '%s\n' "${hosts[@]}" | \
+      xargs -P "$MAX_PARALLEL" -I {} bash -c '
+        host="$1"
+        shift
+        source "'"$0"'"
+        execute_on_host "$host" "$@"
+      ' _ {} "${command[@]}"
+  else
+    # Sequential execution
+    local i=1
+    for host in "${hosts[@]}"; do
+      msg_info "Processing host $i/$total: $host"
+      
+      if execute_on_host "$host" "${command[@]}"; then
+        ((success++))
+      else
+        ((failed++))
+      fi
+      
+      ((i++))
+    done
+  fi
+  
+  # Summary
+  msg_line "="
+  msg_success "Execution complete"
+  msg "  Total hosts: $total"
+  if ((! PARALLEL)); then
+    msg "  Successful: $success"
+    msg "  Failed: $failed"
+  fi
+  
+  return 0
+}
+
+# Show usage
+usage() {
+  cat <<EOF
+$SCRIPT_NAME v$VERSION - Execute commands on multiple SSH hosts
+
+USAGE:
+  $SCRIPT_NAME [OPTIONS] COMMAND...
+  $SCRIPT_NAME [OPTIONS] -- COMMAND...
+
+DESCRIPTION:
+  Execute the same command on all SSH-accessible hosts found by lhssh.
+
+OPTIONS:
+  -h, --help         Show this help message
+  -V, --version      Show version information
+  -v, --verbose      Enable verbose output
+  -q, --quiet        Suppress non-essential output
+  -p, --parallel     Execute commands in parallel
+  -P, --max-parallel Set max parallel connections (default: $MAX_PARALLEL)
+  
+  Advanced Options:
+  --lhssh PATH       Path to lhssh command (default: $LHSSH_CMD)
+  -- ARGS...         Pass remaining arguments to lhssh
+
+EXAMPLES:
+  # Check disk usage on all hosts
+  $SCRIPT_NAME df -h
+  
+  # Update all hosts
+  $SCRIPT_NAME sudo apt update
+  
+  # Run in parallel
+  $SCRIPT_NAME -p uptime
+  
+  # Complex command with pipes
+  $SCRIPT_NAME -- 'ps aux | grep nginx'
+  
+  # Pass options to lhssh
+  $SCRIPT_NAME -- --lhssh -u admin -n 10.0.0. -- hostname
+
+NOTES:
+  - Commands are executed with the same user configured in lhssh
+  - Use quotes for commands with spaces or special characters
+  - Exit codes from failed hosts are reported but don't stop execution
+
+SEE ALSO:
+  lhssh - The underlying SSH scanner and connection tool
+EOF
+}
+
+# Show lhssh help
+show_lhssh_help() {
+  msg_line '-'
+  "$LHSSH_CMD" --help || true
+}
+
+# Main function
+main() {
+  local -a command=()
+  local -a lhssh_extra_opts=()
+  
+  # Check if lhssh exists
+  if ! command -v "$LHSSH_CMD" >/dev/null 2>&1; then
+    # Try to find it in the same directory
+    if [[ -x "$SCRIPT_DIR/lhssh" ]]; then
+      LHSSH_CMD="$SCRIPT_DIR/lhssh"
+    else
+      msg_error "lhssh command not found. Please ensure lhssh is in your PATH."
+      exit 127
+    fi
+  fi
+  
+  # Parse arguments
+  while (($#)); do
+    case "$1" in
+      -h|--help)
+        usage
+        show_lhssh_help
+        exit 0
+        ;;
+      -V|--version)
+        echo "$SCRIPT_NAME version $VERSION"
+        exit 0
+        ;;
+      -v|--verbose)
+        VERBOSE=1
+        ;;
+      -q|--quiet)
+        QUIET=1
+        VERBOSE=0
+        ;;
+      -p|--parallel)
+        PARALLEL=1
+        ;;
+      -P|--max-parallel)
+        shift
+        MAX_PARALLEL="${1:-10}"
+        ;;
+      --lhssh)
+        shift
+        LHSSH_CMD="${1:-lhssh}"
+        ;;
+      --|--lhssh)
+        shift
+        # Collect remaining args
+        while (($#)) && [[ "$1" != "--" ]]; do
+          lhssh_extra_opts+=("$1")
+          shift
+        done
+        [[ "$1" == "--" ]] && shift
+        command=("$@")
+        break
+        ;;
+      -*)
+        msg_error "Unknown option: $1"
+        usage >&2
+        exit 22
+        ;;
+      *)
+        command+=("$1")
+        ;;
+    esac
+    shift
+  done
+  
+  # Check if command provided
+  if ((${#command[@]} == 0)); then
+    msg_error "No command specified"
+    usage >&2
+    exit 22
+  fi
+  
+  msg_info "Command to execute: ${command[*]}"
+  if ((${#lhssh_extra_opts[@]})); then
+    msg_info "Extra lhssh options: ${lhssh_extra_opts[*]}"
+  fi
+  
+  # Execute on all hosts
+  execute_on_all_hosts "${command[@]}"
+}
+
+# Export functions for parallel execution
+export -f execute_on_host msg msg_info msg_error msg_warn msg_success
+export VERBOSE QUIET LHSSH_CMD ERR_FILE
+export RED GREEN YELLOW BLUE CYAN NC
+
+# Run main
+main "$@"
+#fin
