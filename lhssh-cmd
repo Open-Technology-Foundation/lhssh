@@ -28,51 +28,75 @@ declare -gr NC='\033[0m' # No Color
 # Cleanup on exit
 trap 'cleanup' EXIT INT TERM
 
-# Native logging functions (replacing e.bash msg functions)
-msg() {
+# Logging system
+# Provides consistent output formatting across error, warning, info and debug levels
+# Levels: ERROR, WARN, INFO, DEBUG
+log() {
+  local level="$1"
+  shift
   local message="$*"
-  if ((! QUIET)); then
-    echo -e "$message"
-  fi
+  
+  case "$level" in
+    ERROR)
+      echo -e "${RED}[ERROR]${NC} $message" >&2
+      ;;
+    WARN)
+      ((QUIET)) || echo -e "${YELLOW}[WARN]${NC} $message" >&2
+      ;;
+    INFO)
+      ((VERBOSE==0 || QUIET)) || echo -e "${BLUE}[INFO]${NC} $message" >&2
+      ;;
+    DEBUG)
+      #shellcheck disable=SC2015
+      ((VERBOSE > 1)) && echo -e "[DEBUG] $message" >&2 || true
+      ;;
+    *)
+      ((QUIET)) || echo "$message"
+      ;;
+  esac
 }
 
-msg_info() {
-  if ((VERBOSE && ! QUIET)); then
-    echo -e "${BLUE}[INFO]${NC} $*" >&2
-  fi
-}
+# Convenience logging functions
+log_error() { log ERROR "$@"; }
+log_warn() { log WARN "$@"; }
+log_info() { log INFO "$@"; }
+log_debug() { log DEBUG "$@"; }
 
-msg_error() {
-  echo -e "${RED}[ERROR]${NC} $*" >&2
-}
-
-msg_warn() {
-  if ((! QUIET)); then
-    echo -e "${YELLOW}[WARN]${NC} $*" >&2
-  fi
-}
-
-msg_success() {
-  if ((! QUIET)); then
-    echo -e "${GREEN}[OK]${NC} $*" >&2
-  fi
-}
-
+# Compatibility aliases for existing code
+msg() { ((QUIET)) || echo -e "$*"; }
+msg_info() { log_info "$@"; }
+msg_error() { log_error "$@"; }
+msg_warn() { log_warn "$@"; }
+msg_success() { ((QUIET)) || echo -e "${GREEN}[OK]${NC} $*" >&2; }
 msg_line() {
   local char="${1:--}"
   local width="${2:-80}"
-  printf '%*s\n' "$width" '' | tr ' ' "$char"
+  ((QUIET)) || printf '%*s\n' "$width" '' | tr ' ' "$char"
 }
 
-# Version management (replacing e.bash version functions)
-version_get() {
-  echo "$VERSION"
+# Error message helper
+# Converts exit codes to human-readable error messages
+error_msg() {
+  local exit_code=$1
+  case $exit_code in
+    0) echo "Success" ;;
+    1) echo "General error" ;;
+    2) echo "Misuse of shell command" ;;
+    22) echo "Invalid argument" ;;
+    126) echo "Command cannot execute" ;;
+    127) echo "Command not found" ;;
+    130) echo "Interrupted by Ctrl+C" ;;
+    255) echo "Exit status out of range" ;;
+    *) echo "Unknown error (code: $exit_code)" ;;
+  esac
 }
 
 # Cleanup function
+# Called on script exit to clean up temp files and log errors
 cleanup() {
   local exit_code=${1:-$?}
   [[ ! -f "$ERR_FILE" ]] || rm -f "$ERR_FILE"
+  ((exit_code==0)) || log_error "Exit: $(error_msg "$exit_code")"
   exit "$exit_code"
 }
 
@@ -102,11 +126,13 @@ execute_on_host() {
   else
     exit_code=$?
     # Error
-    local error_msg
-    error_msg=$(<"$ERR_FILE")
-    echo -e "${RED}[$host]${NC} Failed (exit code: $exit_code)" >&2
-    if [[ -n "$error_msg" ]]; then
-      echo -e "${RED}[$host]${NC} $error_msg" >&2
+    local error_desc
+    error_desc=$(error_msg $exit_code)
+    local error_output
+    error_output=$(<"$ERR_FILE")
+    echo -e "${RED}[$host]${NC} Failed: $error_desc" >&2
+    if [[ -n "$error_output" ]]; then
+      echo -e "${RED}[$host]${NC} $error_output" >&2
     fi
   fi
   
@@ -122,7 +148,7 @@ execute_on_all_hosts() {
   msg_info "Discovering SSH hosts..."
   
   # Get list of hosts
-  mapfile -t hosts < <("$LHSSH_CMD" "${lhssh_scan_opts[@]}")
+  mapfile -t hosts < <("$LHSSH_CMD" "${lhssh_scan_opts[@]}" || true)
   
   if ((${#hosts[@]} == 0)); then
     msg_error "No SSH hosts found"
@@ -141,13 +167,17 @@ execute_on_all_hosts() {
     msg_info "Executing command in parallel (max $MAX_PARALLEL simultaneous connections)"
     
     # Use xargs for parallel execution
+    # Export necessary variables and functions for subshells
+    export -f execute_on_host log log_error log_warn log_info log_debug error_msg
+    export -f msg msg_info msg_error msg_warn msg_success
+    export LHSSH_CMD VERBOSE QUIET ERR_FILE RED GREEN YELLOW BLUE CYAN NC
+    
     #shellcheck disable=SC2016
     printf '%s\n' "${hosts[@]}" | \
       xargs -P "$MAX_PARALLEL" -I {} bash -c '
         host="$1"
         shift
-        source "'"$0"'"
-        execute_on_host "$host" "$@"
+        execute_on_host "$host" "$@" || true
       ' _ {} "${command[@]}"
   else
     # Sequential execution
@@ -286,7 +316,7 @@ main() {
           lhssh_extra_opts+=("$1")
           shift
         done
-        [[ "$1" == "--" ]] && shift
+        (($#)) && [[ "$1" == "--" ]] && shift
         command=("$@")
         break
         ;;
