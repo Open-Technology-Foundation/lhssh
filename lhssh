@@ -99,7 +99,7 @@ error_msg() {
     126) echo "Command cannot execute" ;;
     127) echo "Command not found" ;;
     130) echo "Interrupted by Ctrl+C" ;;
-    255) echo "Exit status out of range" ;;
+    255) echo "SSH connection failed" ;;
     *) echo "Unknown error (code: $exit_code)" ;;
   esac
 }
@@ -109,7 +109,11 @@ error_msg() {
 # Usage: cleanup [EXIT_CODE]
 cleanup() {
   local exit_code=${1:-$?}
-  ((exit_code==0)) || log_error "Exit: $(error_msg "$exit_code")"
+  # Only log error if it's not an SSH connection failure (255)
+  # SSH already provides detailed error messages
+  if ((exit_code != 0 && exit_code != 255)); then
+    log_error "Exit: $(error_msg "$exit_code")"
+  fi
   exit "$exit_code"
 }
 

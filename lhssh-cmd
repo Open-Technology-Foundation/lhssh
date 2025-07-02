@@ -86,7 +86,7 @@ error_msg() {
     126) echo "Command cannot execute" ;;
     127) echo "Command not found" ;;
     130) echo "Interrupted by Ctrl+C" ;;
-    255) echo "Exit status out of range" ;;
+    255) echo "SSH connection failed" ;;
     *) echo "Unknown error (code: $exit_code)" ;;
   esac
 }
