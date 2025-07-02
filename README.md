@@ -1,8 +1,7 @@
 # lhssh - Local Host SSH Scanner and Connection Manager
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/okusi/lhssh)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Bash](https://img.shields.io/badge/bash-5.0%2B-orange)](https://www.gnu.org/software/bash/)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/Open-Technology-Foundation/lhssh)
+[![License](https://img.shields.io/badge/license-GPL-3-green)](LICENSE)
 
 A modern, dependency-free bash utility for scanning and managing SSH connections to hosts on local networks.
 
@@ -30,7 +29,7 @@ A modern, dependency-free bash utility for scanning and managing SSH connections
 
 1. Clone or download the repository:
 ```bash
-git clone https://github.com/okusi/lhssh.git
+git clone https://github.com/Open-Technology-Foundation/lhssh.git
 cd lhssh
 ```
 
@@ -284,14 +283,6 @@ lhssh -b 100 -f 150  # Smaller range
 - lhssh uses key-based authentication only (`PasswordAuthentication=no`)
 - Configuration file is created with 600 permissions
 - SSH host key checking is set to `accept-new` for convenience
-- Consider using specific user accounts instead of root
-
-## Related Tools
-
-- **lhssh-cmd**: Execute commands on multiple hosts in parallel
-- **ssh**: Standard SSH client for manual connections
-- **ansible**: More complex automation and configuration management
-- **pssh**: Parallel SSH for large-scale operations
 
 ## Contributing
 
@@ -325,8 +316,4 @@ GPL-3 License - see LICENSE file for details
 For issues, questions, or contributions:
 
 - GitHub Issues: [https://github.com/Open-Technology-Foundation/lhssh/issues](https://github.com/Open-Technology-Foundation/lhssh/issues)
-- Email: support@okusi.org
-
----
-
-*Note: This tool is designed for legitimate system administration purposes. Always ensure you have permission to scan and access systems on your network.*
+- Email: admin@yatti.id
